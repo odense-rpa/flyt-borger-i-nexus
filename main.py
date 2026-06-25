@@ -1,45 +1,150 @@
 import asyncio
 import logging
 import sys
+import argparse
+from pathlib import Path
 
 from automation_server_client import AutomationServer, Workqueue, WorkItemError, Credential, WorkItemStatus
+from kmd_nexus_client import NexusClientManager
+from odk_tools.reporting import report
+from odk_tools.tracking import Tracker
 
+from proces.models import LeverandørsSkiftOpgave, OrganisationsSkiftOpgave, FjernOrganisationsOpgave, TiføjOrganisationsOpgave
+from itertools import chain
+from proces.excel_service import find_excel_fil, afkode_excel, hent_opgaveskift_organisationer
+from proces.nexus_service import NexusService
 
-async def populate_queue(workqueue: Workqueue):
+nexus: NexusClientManager
+tracker: Tracker
+nexus_service: NexusService
+
+procesnavn = "Flyt borger i Nexus"
+
+async def populate_queue(workqueue: Workqueue, mappe_sti: str|Path):
     logger = logging.getLogger(__name__)
 
-    logger.info("Hello from populate workqueue!")
+    excel_fil_sti = find_excel_fil(mappe_sti)
+
+    tilføj_opgaver, fjern_opgaver, leverandskift_opgaver, organisationsskift_opgaver = afkode_excel(excel_fil_sti)
+    
+    Path(excel_fil_sti).parent.joinpath("Indlæst.txt").write_text("", encoding="utf-8")
+
+    for opgave in tilføj_opgaver:
+        workqueue.add_item(opgave.model_dump(), opgave.cpr)
+
+    for opgave in fjern_opgaver:
+        workqueue.add_item(opgave.model_dump(), opgave.cpr)
+
+    for opgave in leverandskift_opgaver:
+        workqueue.add_item(opgave.model_dump(), opgave.cpr)
+
+    for opgave in organisationsskift_opgaver:
+        workqueue.add_item(opgave.model_dump(), opgave.cpr)
 
 
-async def process_workqueue(workqueue: Workqueue):
+async def process_workqueue(workqueue: Workqueue, mappe_sti: str|Path):
     logger = logging.getLogger(__name__)
-
-    logger.info("Hello from process workqueue!")
-
+        
+    aktiviteter = []
+        
     for item in workqueue:
         with item:
             data = item.data  # Item data deserialized from json as dict
- 
-            try:
-                # Process the item here
-                pass
+            try:              
+                match data["type"]:
+                    case "tilføj":
+                        opgave = TiføjOrganisationsOpgave.model_validate(data)
+                        nexus_service.tilføj_organisation(opgave)                                                        
+                    case "fjern":
+                        opgave = FjernOrganisationsOpgave.model_validate(data)
+                        nexus_service.fjern_organisation(opgave)
+                    case "leverandørskift":
+                        opgave = LeverandørsSkiftOpgave.model_validate(data)
+                                               
+                        nexus_service.flyt_indsatser_og_indsatspakker(opgave)
+                    case "organisationsskift":
+                        opgave = OrganisationsSkiftOpgave.model_validate(data)
+                        
+                        if aktiviteter == []:
+                            excel_fil_sti = find_excel_fil(mappe_sti)
+                            organisationsnavne = hent_opgaveskift_organisationer(excel_fil_sti)
+                            
+                            aktiviteter = nexus_service.hent_aktiviteter(organisationsnavne)
+                        
+                        nexus_service.flyt_opgaver(opgave, aktiviteter)                                         
+                    case _:
+                        raise WorkItemError(f"Ukendt opgavetype: {data['type']}")
             except WorkItemError as e:
+                
+                report(
+                    "flyt-borger-i-nexus",
+                    "Fejl",
+                    {
+                        "Cpr": data["cpr"],
+                        "Fejl": e
+                    }
+                )
                 # A WorkItemError represents a soft error that indicates the item should be passed to manual processing or a business logic fault
                 logger.error(f"Error processing item: {data}. Error: {e}")
                 item.fail(str(e))
+                
+    #Håndter overskriv fil og lig ny fil, omkring opgave gennemført
+    excel_sti = find_excel_fil(mappe_sti)   
+    tekst_fil = Path(excel_sti).parent.joinpath("Indlæst.txt")
+    
+    if tekst_fil.exists() and tekst_fil.name == "Indlæst.txt":
+        tekst_fil.rename("Kørsel Gennemført.txt")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+    
     ats = AutomationServer.from_environment()
     workqueue = ats.workqueue()
+    
+    parser = argparse.ArgumentParser(description=procesnavn)
+    
+    parser.add_argument(
+        "--queue",
+        action="store_true"
+    )
+    
+    parser.add_argument(
+        "--folder-path",
+        type=Path,
+        default=Path("test_filer"),
+    )
+    
+    args = parser.parse_args()
 
     # Initialize external systems for automation here..
+    nexus_credential = Credential.get_credential("KMD Nexus - produktion")
+    tracking_credential = Credential.get_credential("Odense SQL Server")
+    
+    nexus = NexusClientManager(
+        nexus_credential.data["instance"],
+        nexus_credential.username or "",
+        nexus_credential.password or "",
+    )
+    
+    tracker = Tracker(
+        username=tracking_credential.username or "",
+        password=tracking_credential.password or ""
+    )
+    
+    nexus_service = NexusService(
+        nexus,
+        tracker
+    )
 
     # Queue management
-    if "--queue" in sys.argv:
+    if args.queue:
         workqueue.clear_workqueue(WorkItemStatus.NEW)
-        asyncio.run(populate_queue(workqueue))
+        asyncio.run(populate_queue(workqueue, args.folder_path))
         exit(0)
 
     # Process workqueue
-    asyncio.run(process_workqueue(workqueue))
+    asyncio.run(process_workqueue(workqueue, args.folder_path))
