@@ -4,7 +4,7 @@ Automatiserer flytning af borgere i KMD Nexus ved at læse opgaver fra en Excel-
 
 ## Hvad gør robotten?
 
-1. Finder og læser en Excel-fil i den angivne mappe (standard: `test_filer`).
+1. Finder og læser en Excel-fil i den angivne mappe (`--folder-path` eller `FOLDER_PATH`).
 2. Afkoder Excel-filen og udtrækker fire typer opgaver: tilføj organisation, fjern organisation, leverandørskift og organisationsskift.
 3. Opretter en `Indlæst.txt`-markørfil og fylder arbejdskøen med opgaverne (ved `--queue`).
 4. Behandler hver opgave i arbejdskøen:
@@ -41,6 +41,7 @@ Credentials registreres i Automation Server:
 | `ATS_URL` | URL til Automation Server API (f.eks. `http://localhost/api`) |
 | `ATS_TOKEN` | Bearer token til autentificering mod Automation Server |
 | `ATS_WORKQUEUE_OVERRIDE` | Overstyr arbejdskø-ID (valgfri) |
+| `FOLDER_PATH` | Sti til inputmappen med opgavemappen (bruges hvis `--folder-path` ikke er angivet) |
 
 ## Kørsel
 
@@ -49,7 +50,7 @@ uv run python main.py --queue --folder-path <sti-til-mappe>   # Fyld arbejdskøe
 uv run python main.py --folder-path <sti-til-mappe>           # Behandl arbejdskøen
 ```
 
-Mappen med Excel-filen angives via `--folder-path` (standard: `test_filer`).
+Mappen med Excel-filen angives via `--folder-path` eller miljøvariablen `FOLDER_PATH`.
 
 ## Afhængigheder
 

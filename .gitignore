@@ -33,3 +33,5 @@ Thumbs.db
 *.xlsm
 *.xlsb
 *.csv
+
+input/

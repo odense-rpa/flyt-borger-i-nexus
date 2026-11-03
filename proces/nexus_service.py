@@ -43,6 +43,9 @@ class NexusService:
             if aktivtetsliste is None:
                 logger.info(f"Ingen aktitetsliste fundet for {organisationsnavn}")
                 continue
+            if aktivtetsliste == []:
+                logger.info(f"Ingen Aktitviteter fundet for {organisationsnavn} på listen")
+                continue
             else:
                 logger.info(f"Aktitviteter fundet for {organisationsnavn}")
                 aktiviteter.extend(aktivtetsliste)
