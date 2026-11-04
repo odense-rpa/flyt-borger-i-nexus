@@ -101,33 +101,38 @@ class NexusService:
             indsats = self.nexus.indsatser.hent_indsats(indsats_reference)
                     
             #Hvis det ikke er den korrekte organisation forsættes til næste indsats
-            supplier = next((elem["supplier"] for elem in indsats["currentElements"] if "supplier" in elem), None)
+            supplier = next((elem["supplier"] for elem in indsats["currentElements"] if elem.get("type") == "supplier"), None)
             if supplier is None or supplier["name"] != opgave.organisation_fra:
                 logger.info(f"Springer indsats {indsats['name']} over: leverandør er ikke {opgave.organisation_fra}")
                 continue
             
             #Findes slutdato feltet ikke forsættes til næste indsats
-            basketGrantEndDate = next((elem["basketGrantEndDate"] for elem in indsats["currentElements"] if "basketGrantEndDate" in elem), None)
-            if basketGrantEndDate is None:
+            if not any(elem.get("type") == "basketGrantEndDate" for elem in indsats["currentElements"]):
                 logger.info(f"Springer indsats {indsats['name']} over: intet slutdatofelt")
                 continue
-            
-            indsats_dato = basketGrantEndDate["Date"]
+
+            basketGrantEndDate = next(elem for elem in indsats["currentElements"] if elem.get("type") == "basketGrantEndDate")
+
+            indsats_dato = basketGrantEndDate["date"]
             
             #Hvis der er slutdato, som er overskredet forsættes til næste indsats
-            if indsats_dato is not None and datetime.strptime(indsats_dato, "%Y-%m-%d").date() < datetime.today().date():
+            if indsats_dato and datetime.fromisoformat(indsats_dato).date() < datetime.today().date():
                 logger.info(f"Springer indsats {indsats['name']} over: slutdato {indsats_dato} er overskredet")
                 continue
             
             try:
                 logger.info(f"Flytter indsats {indsats["name"]} til {opgave.organisation_til}")    
+                ikrafttrædelsesdato = datetime.strptime(opgave.ikrafttrædelsesdato, "%d-%m-%Y")
+                ændringer = {
+                    "entryDate": ikrafttrædelsesdato,
+                    "supplier": opgave.organisation_til
+                }
+                if any(elem.get("type") == "billingStartDate" and elem.get("date") for elem in indsats["currentElements"]):
+                    ændringer["billingStartDate"] = ikrafttrædelsesdato
+
                 self.nexus.indsatser.rediger_indsats(
                     indsats,
-                    {
-                        "entyDate": opgave.ikrafttrædelsesdato,
-                        "billingStartDate": opgave.ikrafttrædelsesdato,
-                        "supplier": opgave.organisation_til
-                    },
+                    ændringer,
                     "Ændr fremtidigt"
                 )
                 logger.info(f"Indsats {indsats['name']} flyttet, afregner")

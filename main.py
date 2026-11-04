@@ -83,8 +83,7 @@ async def process_workqueue(workqueue: Workqueue, mappe_sti: str|Path):
                         nexus_service.flyt_opgaver(opgave, aktiviteter)                                         
                     case _:
                         raise WorkItemError(f"Ukendt opgavetype: {data['type']}")
-            except WorkItemError as e:
-                
+            except WorkItemError as e:              
                 report(
                     "flyt-borger-i-nexus",
                     "Fejl",
@@ -96,6 +95,15 @@ async def process_workqueue(workqueue: Workqueue, mappe_sti: str|Path):
                 # A WorkItemError represents a soft error that indicates the item should be passed to manual processing or a business logic fault
                 logger.error(f"Error processing item: {data}. Error: {str(e)}")
                 item.fail(str(e))
+            except Exception as e:
+                report(
+                    "flyt-borger-i-nexus",
+                    "Fejl",
+                    {
+                        "Cpr": data["cpr"],
+                        "Fejl": f"Ukendt fejl: {str(e)}"
+                    }
+                )
                 
     #Håndter overskriv fil og lig ny fil, omkring opgave gennemført
     tekst_fil = find_tekst_fil(mappe_sti)
