@@ -103,17 +103,20 @@ class NexusService:
             #Hvis det ikke er den korrekte organisation forsættes til næste indsats
             supplier = next((elem["supplier"] for elem in indsats["currentElements"] if "supplier" in elem), None)
             if supplier is None or supplier["name"] != opgave.organisation_fra:
+                logger.info(f"Springer indsats {indsats['name']} over: leverandør er ikke {opgave.organisation_fra}")
                 continue
             
             #Findes slutdato feltet ikke forsættes til næste indsats
             basketGrantEndDate = next((elem["basketGrantEndDate"] for elem in indsats["currentElements"] if "basketGrantEndDate" in elem), None)
             if basketGrantEndDate is None:
+                logger.info(f"Springer indsats {indsats['name']} over: intet slutdatofelt")
                 continue
             
             indsats_dato = basketGrantEndDate["Date"]
             
             #Hvis der er slutdato, som er overskredet forsættes til næste indsats
             if indsats_dato is not None and datetime.strptime(indsats_dato, "%Y-%m-%d").date() < datetime.today().date():
+                logger.info(f"Springer indsats {indsats['name']} over: slutdato {indsats_dato} er overskredet")
                 continue
             
             try:
@@ -127,6 +130,8 @@ class NexusService:
                     },
                     "Ændr fremtidigt"
                 )
+                logger.info(f"Indsats {indsats['name']} flyttet, afregner")
+                self.tracker.track_task(procesnavn)
             except Exception as e:
                 logger.error(f"Fejl, kunne ikke flytte indsats {indsats["name"]} til {opgave.organisation_til}. Fejlen: {e}")
                 report(
@@ -138,20 +143,17 @@ class NexusService:
                         "Fejlbesked": e
                     }
                 )
-            
-            logger.info("Indsats flyttet, afregner")
-            self.tracker.track_task(procesnavn)
-    
+
     def flyt_indsatser_og_indsatspakker(self, opgave: LeverandørsSkiftOpgave):
         logger = logging.getLogger(__name__)
         borger = self.hent_borger(opgave.cpr)
         
-        logger.info("Påbegynder 'Leverandørskift(flytning af indsatser)' opgave")
+        logger.info(f"Påbegynder 'Leverandørskift(flytning af indsatser)' opgave: {opgave.organisation_fra} → {opgave.organisation_til}")
                 
         visning = self.nexus.borgere.hent_visning(borger, "- Alt")
         
         if visning is None:
-            logger.error(f"Fejl, kunne ikke hente visning for borger {opgave.cpr}")
+            logger.error("Fejl, kunne ikke hente visning for borger")
             raise WorkItemError("Visning kunne ikke hentes på borger")
                 
         referencer = self.nexus.borgere.hent_referencer(visning)
@@ -178,11 +180,13 @@ class NexusService:
         if indsatspakke_referencer is not None and indsatspakke_referencer != []:
             logger.info("Indsatspakker fundet for borger, påbegynder flytning af pakker")
             self.håndter_indsats_flyt(opgave, indsatspakke_referencer)
-    
+        if not indsats_referencer and not indsatspakke_referencer:
+            logger.info("Ingen aktive indsatser eller indsatspakker fundet for borger")
+
     def flyt_opgaver(self, opgave:OrganisationsSkiftOpgave, aktiviteter:list[dict]):
         logger = logging.getLogger(__name__)
         
-        logger.info("Påbegynder 'organisationsskift for opgaver' opgave")
+        logger.info(f"Påbegynder 'organisationsskift for opgaver' opgave: {opgave.organisation_fra} → {opgave.organisation_til}")
         
         relevante_aktiviter = [a for a in aktiviteter if any(p["patientIdentifier"]["identifier"] == opgave.cpr for p in a["patients"])]
         
@@ -195,6 +199,7 @@ class NexusService:
             nexus_opgave = self.nexus.nexus_client.get(opgave_endpoint).json()
             
             if nexus_opgave["organizationAssignee"]["displayName"] != opgave.organisation_fra:
+                logger.info(f"Springer opgave {nexus_opgave['name']} over: ikke tildelt {opgave.organisation_fra}")
                 continue
             
             mulige_organisationer = self.nexus.nexus_client.get(nexus_opgave["_links"]["availableOrganizationAssignees"]["href"]).json()
@@ -219,7 +224,7 @@ class NexusService:
             nexus_opgave["organizationAssignee"]["displayName"] = organisation["name"]
             try:
                 nexus_opgave = self.nexus.opgaver.rediger_opgave(nexus_opgave)
+                logger.info(f"Opgave {nexus_opgave['name']} flyttet til {opgave.organisation_til}, afregner")
+                self.tracker.track_task(procesnavn)
             except Exception as e:
-               logger.error(f"Fejl: {e}")
-            
-            self.tracker.track_task(procesnavn)
+                logger.error(f"Fejl, kunne ikke flytte opgave {nexus_opgave['name']}: {e}")
