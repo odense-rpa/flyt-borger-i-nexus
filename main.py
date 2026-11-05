@@ -67,6 +67,7 @@ async def process_workqueue(workqueue: Workqueue, mappe_sti: str|Path):
                     case "fjern":
                         opgave = FjernOrganisationsOpgave.model_validate(data)
                         nexus_service.fjern_organisation(opgave)
+
                     case "leverandørskift":
                         opgave = LeverandørsSkiftOpgave.model_validate(data)
                                                
@@ -89,7 +90,7 @@ async def process_workqueue(workqueue: Workqueue, mappe_sti: str|Path):
                     "Fejl",
                     {
                         "Cpr": data["cpr"],
-                        "Fejl": str(e)
+                        "Fejl": f"{data.get('type')}: {str(e)}"
                     }
                 )
                 # A WorkItemError represents a soft error that indicates the item should be passed to manual processing or a business logic fault
@@ -101,9 +102,10 @@ async def process_workqueue(workqueue: Workqueue, mappe_sti: str|Path):
                     "Fejl",
                     {
                         "Cpr": data["cpr"],
-                        "Fejl": f"Ukendt fejl: {str(e)}"
+                        "Fejl": f"{data.get('type')}: Ukendt fejl: {str(e)}"
                     }
                 )
+                raise
                 
     #Håndter overskriv fil og lig ny fil, omkring opgave gennemført
     tekst_fil = find_tekst_fil(mappe_sti)

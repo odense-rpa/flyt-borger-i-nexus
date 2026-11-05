@@ -22,22 +22,26 @@ class NexusService:
         
     def hent_borger(self, cpr:str) -> dict:
         logger = logging.getLogger(__name__)
+        logger.info("Henter borger")
         borger = self.nexus.borgere.hent_borger(cpr)
-        
+
         if borger is None:
-            
+            logger.error("Borger ikke fundet i Nexus")
             raise ValueError("Borger ikke fundet")
-        
+
+        logger.info("Borger fundet")
         return borger
     
     def hent_aktiviteter(self, organisationsnavne: list[str]) -> list[dict]:
         logger = logging.getLogger(__name__)
         aktiviteter = []
         
-        logging.info("Henter aktivitetslister")
+        logger.info(f"Henter aktivitetslister for {len(organisationsnavne)} organisationer: {organisationsnavne}")
         for organisationsnavn in organisationsnavne:
             organisation = self.nexus.organisationer.hent_organisation_ved_navn(organisationsnavn)
-        
+            if organisation is None:
+                logger.warning(f"Organisation {organisationsnavn} ikke fundet i Nexus")
+
             aktivtetsliste = self.nexus.aktivitetslister.hent_aktivitetsliste("Opgaver: Robot - 1 måned tilbage og 1 år frem", organisation, None)
         
             if aktivtetsliste is None:
@@ -47,16 +51,17 @@ class NexusService:
                 logger.info(f"Ingen Aktitviteter fundet for {organisationsnavn} på listen")
                 continue
             else:
-                logger.info(f"Aktitviteter fundet for {organisationsnavn}")
+                logger.info(f"{len(aktivtetsliste)} aktiviteter fundet for {organisationsnavn}")
                 aktiviteter.extend(aktivtetsliste)
-        
+
+        logger.info(f"I alt {len(aktiviteter)} aktiviteter hentet")
         return aktiviteter
     
     def tilføj_organisation(self, opgave: TiføjOrganisationsOpgave):
         logger = logging.getLogger(__name__)
         borger = self.hent_borger(opgave.cpr)
         
-        logger.info("Påbegynder 'tilføjelse af organisation' opgave")
+        logger.info(f"Påbegynder 'tilføjelse af organisation' opgave: {opgave.organisation}")
         
         organisation = self.nexus.organisationer.hent_organisation_ved_navn(opgave.organisation)
         
@@ -75,7 +80,7 @@ class NexusService:
         logger = logging.getLogger(__name__)
         borger = self.hent_borger(opgave.cpr)
         
-        logger.info("Påbegynder 'fjernelse af organisation' opgave")
+        logger.info(f"Påbegynder 'fjernelse af organisation' opgave: {opgave.organisation} med ophørsdato {opgave.ophørsdato}")
         
         borgers_organisationer = self.nexus.organisationer.hent_organisationer_for_borger(borger, True)
         
@@ -94,12 +99,13 @@ class NexusService:
     
     def håndter_indsats_flyt(self, opgave: LeverandørsSkiftOpgave, indsats_referencer: list[dict]):
         logger = logging.getLogger(__name__)
-        
-        
+
+        logger.info(f"Gennemgår {len(indsats_referencer)} indsatser")
         for indsats_reference in indsats_referencer:
-        
+
             indsats = self.nexus.indsatser.hent_indsats(indsats_reference)
-                    
+            logger.info(f"Behandler indsats {indsats['name']}")
+
             #Hvis det ikke er den korrekte organisation forsættes til næste indsats
             supplier = next((elem["supplier"] for elem in indsats["currentElements"] if elem.get("type") == "supplier"), None)
             if supplier is None or supplier["name"] != opgave.organisation_fra:
@@ -138,14 +144,14 @@ class NexusService:
                 logger.info(f"Indsats {indsats['name']} flyttet, afregner")
                 self.tracker.track_task(procesnavn)
             except Exception as e:
-                logger.error(f"Fejl, kunne ikke flytte indsats {indsats["name"]} til {opgave.organisation_til}. Fejlen: {e}")
+                logger.error(f"Fejl, kunne ikke flytte indsats {indsats["name"]} til {opgave.organisation_til}. Fejlen: {str(e)}")
                 report(
                     "flyt-borger-i-nexus",
                     "Fejl",
                     {
                         "Cpr": opgave.cpr,
                         "Indsatsnavn": indsats["name"],
-                        "Fejlbesked": e
+                        "Fejlbesked": f"Fejl ved leverandørskift fra {opgave.organisation_fra} til {opgave.organisation_til}: {str(e)}"
                     }
                 )
 
@@ -198,7 +204,9 @@ class NexusService:
         if relevante_aktiviter == []:
             logger.info("Ingen relevante aktiviter fundet for borger")
             return
-        
+
+        logger.info(f"{len(relevante_aktiviter)} relevante aktiviteter fundet for borger")
+
         for aktivitet in relevante_aktiviter:
             opgave_endpoint: str = aktivitet["_links"]["self"]["href"]
             nexus_opgave = self.nexus.nexus_client.get(opgave_endpoint).json()
@@ -232,4 +240,4 @@ class NexusService:
                 logger.info(f"Opgave {nexus_opgave['name']} flyttet til {opgave.organisation_til}, afregner")
                 self.tracker.track_task(procesnavn)
             except Exception as e:
-                logger.error(f"Fejl, kunne ikke flytte opgave {nexus_opgave['name']}: {e}")
+                logger.error(f"Fejl, kunne ikke flytte opgave {nexus_opgave['name']}: {str(e)}")
